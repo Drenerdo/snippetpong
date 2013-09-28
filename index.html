@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Leap Pong</title>
+  <link rel="stylesheet" type="text/css" href="assets/pong.css" />
+</head>
+<div id="container"></div>
+
+<script src="assets/three.min.js"></script>
+<script src="assets/leap.js"></script>
+<script defer="defer">
+// Created by Andre Smith
+// http://www.suitefolio.com/Drenerdist
+// http://www.github.com/Drenerdist
+
+// scene variables
+var renderer, camera, light, scene, paddle_near, paddle_far, ball;
+var arena_left, arena_right, arena_top, arena_bottom;
+var collidable_near = [], collidable_computer = [];
+var firstFrame = true;
+
+// particle variables
+var particleCount = 2500;
+var particleRotationSpeed = 0.025;
+
+// player variables
+var points_near = 0;
+var points_far = 0;
+
+// paddle
+var paddleSize = 80;
+
+// ball
+var ballVector = [];
+var ballSize = 8;
+
+// arena size
+var size_x = 180;
+var size_y = 100;
+var size_z = 450;
+
+// collision detection against the arena
+var size_x_paddle = size_x - paddleSize/2 - 2;
+var size_y_paddle = size_y - paddleSize/2 - 2;
+var size_x_ball = size_x - ballSize - 2;
+var size_y_ball = size_y - ballSize - 2;
+
+// colors
+var color_stars = 0x005500;
+var color_highlight = 0x00FF00;
+var color_arenaX = 0x333333;
+var color_arenaY = 0x222222;
+var color_arena_hightlight = 0x555555;
+var color_near_paddle = 0x00AAFF;
+var color_far_paddle = 0xFFAA00;
+
+// mouse events
+var mouse;
+
+// leap variables
+var x = [], y = [], z = [], xangle = [], yangle = [], zangle = [];
+
+/* used for determining if player will control paddle with mouse or leap motion.
+ * if there is a leap motion device, the far paddle will be controlled by AI until
+ * a user moves the mouse, at which point the user will take over.
+ * otherwise, the far paddle will be controlled by AI.
+ */
+var leap = false; // starts false; leap loop will make it true 
+var leap_with_AI = true;
+
+// mouse variables
+var mouse_x;
+var mouse_y;
+
+// Star Field
+var particles = new THREE.Geometry(),
+    pMaterial = new THREE.ParticleBasicMaterial({
+      color: 0x0066dd,
+      size: 20,
+      map: THREE.ImageUtils.loadTexture("assets/star.png"),
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false
+    });
+
+// create particles
+for(var p = 0; p < particleCount; p++) {
+  var pX = Math.random() * 1000 - 500, // Random # between -250 & +250
+      pY = Math.random() * 1000 - 500,
+      pZ = Math.random() * 4000 - 2000,
+      particle = new THREE.Vector3(pX,pY,pZ);
+  particles.vertices.push(particle);  // Push each particle to THREE.Geometry()
+}
+
+var particleSystem = new THREE.ParticleSystem(particles, pMaterial);
+
+
+// leap motion controller
+var controller = new Leap.Controller({enableGestures: true});
+Leap.loop({enableGestures: true}, function(frame) {
+  leap = true;
+  var hand = [];
+  var handId;
+  if(frame.hands.length > 0) {
+    for(var i = 0; i < frame.hands.length; i++) {
+      hand[i] = frame.hands[i]; 
+      x[i] = hand[i].palmPosition.x;
+      y[i] = hand[i].palmPosition.y;
+      z[i] = hand[i].palmPosition.z;
+      xangle[i] = hand[i].rotation.yBasis.z*2;
+      yangle[i] = hand[i].rotation.xBasis.z*2;
+      zangle[i] = hand[i].rotation.xBasis.y*2;
+      //console.log(i.toString() + ": " + frame.pointables.length.toString());
+    }
+  }
+});
+
+// init the three js scene
+function init() {
+  // renderer
+  renderer = new THREE.WebGLRenderer();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // camera
+  camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 1, 1400);
+  camera.position.x = 0;
+  camera.position.y = 0;
+  camera.position.z = 630;
+  camera.lookAt(new THREE.Vector3(0,0,0));
+  //camera.rotation.x = 45 * (Math.PI / 180);
+
+  // light source
+  light = new THREE.DirectionalLight(0xFFFFFF);
+  light.position.set(1,1,1).normalize();
+
+  // scene
+  scene = new THREE.Scene();
+
+  // players
+  paddle_near = new THREE.Mesh(new THREE.CubeGeometry(paddleSize,paddleSize,10), new THREE.MeshBasicMaterial({
+    wireframe: true,
+    color: 0x0066FF
+  }));
+  paddle_far = new THREE.Mesh(new THREE.CubeGeometry(paddleSize,paddleSize,10), new THREE.MeshBasicMaterial({
+    wireframe: true,
+    color: 0xFF6600
+  }));
+  paddle_near.overdraw = true;
+  paddle_far.overdraw = true;
+  collidable_near.push(paddle_near);
+  collidable_computer.push(paddle_far);
+
+  // spawn ball
+  spawnBall();
+
+  // arena
+  arena_left = new THREE.Mesh(new THREE.CubeGeometry(1,2*size_y,2.5*size_z), new THREE.MeshBasicMaterial({ 
+      color: color_arenaX,
+      transparent: true,
+      opacity: 0.75
+    }));
+  arena_right = new THREE.Mesh(new THREE.CubeGeometry(1,2*size_y,2.5*size_z), new THREE.MeshBasicMaterial({ 
+      color: color_arenaX,
+      transparent: true,
+      opacity: 0.75
+    }));
+  arena_top = new THREE.Mesh(new THREE.CubeGeometry(2*size_x,1,2.5*size_z), new THREE.MeshBasicMaterial({ 
+      color: color_arenaY,
+      transparent: true,
+      opacity: 0.75
+    }));
+  arena_bottom = new THREE.Mesh(new THREE.CubeGeometry(2*size_x,1,2.5*size_z), new THREE.MeshBasicMaterial({ 
+      color: color_arenaY,
+      transparent: true,
+      opacity: 0.75
+    }));
+
+  arena_left.position = new THREE.Vector3(-size_x,0,0);
+  arena_right.position = new THREE.Vector3(+size_x,0,0);
+  arena_top.position = new THREE.Vector3(0,size_y,0);
+  arena_bottom.position = new THREE.Vector3(0,-size_y,0);
+
+  particleSystem.position = new THREE.Vector3(0,0,0);
+
+  // add to scene
+  scene.add(light);
+  scene.add(paddle_near);
+  scene.add(paddle_far);
+  scene.add(particleSystem);
+  scene.add(arena_left);
+  scene.add(arena_right);
+  scene.add(arena_top);
+  scene.add(arena_bottom);
+}
+
+
+function update() {
+  if(mouse) {
+    leap_with_AI = false;
+  }
+  // player paddle movement
+  if(leap) { // if leap motion is detected
+    // near paddle: leap motion
+    paddle_near.position.x = x[0]*3;
+    paddle_near.position.y = -300+y[0]*2;
+    
+    // far paddle: mouse control/AI
+    if(leap_with_AI) { // AI
+      paddle_far.position.x += (ball.position.x - paddle_far.position.x)/(5.5-ball.position.z/100);
+      paddle_far.position.y += (ball.position.y - paddle_far.position.y)/(5.5-ball.position.z/100);
+    } else { // when user moves mouse, leap_with_AI becomes false and user controls mouse
+      if(mouse) {
+        mouseArena = convertMouseCoordinates(mouse.x,mouse.y);
+        paddle_far.position.x = 2*mouseArena[0];
+        paddle_far.position.y = -2*mouseArena[1];
+      }
+    }
+  } else { // leap motion disconnected
+    // near paddle: mouse control
+    if(mouse) {
+      mouseArena = convertMouseCoordinates(mouse.x,mouse.y);
+      paddle_near.position.x = mouseArena[0];
+      paddle_near.position.y = -mouseArena[1];
+    }
+
+    // far paddle: AI
+    paddle_far.position.x += (ball.position.x - paddle_far.position.x)/(6-ball.position.z/100);
+    paddle_far.position.y += (ball.position.y - paddle_far.position.y)/(6-ball.position.z/100);
+  }
+  paddle_near.position.z = 400;
+  paddle_far.position.z = -400;
+
+  // background effects
+  particleSystem.rotation.z += particleRotationSpeed;
+  particleSystem.position.z += ballVector[2]*3;
+
+  // reset colors each frame
+  paddle_near.material.color.setHex(color_near_paddle);
+  paddle_far.material.color.setHex(color_far_paddle);
+  particleSystem.material.color.setHex(color_stars);
+  arena_left.material.color.setHex(color_arenaX);
+  arena_right.material.color.setHex(color_arenaX);
+  arena_top.material.color.setHex(color_arenaY);
+  arena_bottom.material.color.setHex(color_arenaY);
+
+  // move the ball
+  ball.position.x += ballVector[0];
+  ball.position.y += ballVector[1];
+  ball.position.z += ballVector[2];
+
+  // collision detection
+  var ray = new THREE.Raycaster(ball.position, new THREE.Vector3(ballVector[0],ballVector[1],ballVector[2]).normalize());
+  var intersect_player = ray.intersectObjects(collidable_near, true);
+  var intersect_computer = ray.intersectObjects(collidable_computer, true);
+
+  // player paddle collision
+  if(intersect_player.length > 0) {
+    if(intersect_player[0].distance < 25) {
+      paddle_near.material.color.setHex(color_highlight);
+      ball.material.color.setHex(color_near_paddle);
+      particleSystem.material.color.setHex(color_highlight);
+      var bounceVector = computeBounceVector(paddle_near.position.x,paddle_near.position.y,ball.position.x,ball.position.y);
+      ballVector[0] += bounceVector[0];
+      ballVector[1] += bounceVector[1];
+      ballVector[2] = -ballVector[2] - 0.5;
+      particleRotationSpeed = -particleRotationSpeed;
+    }
+  }
+
+  // computer paddle intersect
+  if(intersect_computer.length > 0) {
+    if(intersect_computer[0].distance < 25) {
+      paddle_far.material.color.setHex(color_highlight);
+      particleSystem.material.color.setHex(color_highlight);
+      ball.material.color.setHex(color_far_paddle);
+      var bounceVector = computeBounceVector(paddle_far.position.x,paddle_far.position.y,ball.position.x,ball.position.y);
+      ballVector[0] += bounceVector[0];
+      ballVector[1] += bounceVector[1];
+      ballVector[2] = -ballVector[2] + 0.5;
+      particleRotationSpeed = -particleRotationSpeed;
+    }
+  }
+
+  // paddle bounds
+  if(paddle_near.position.x < -size_x_paddle) 
+    paddle_near.position.x = -size_x_paddle;
+  if(paddle_near.position.x > size_x_paddle) 
+    paddle_near.position.x = size_x_paddle;
+  if(paddle_near.position.y < -size_y_paddle) 
+    paddle_near.position.y = -size_y_paddle;
+  if(paddle_near.position.y > size_y_paddle) 
+    paddle_near.position.y = size_y_paddle;
+  if(paddle_far.position.x < -size_x_paddle) 
+    paddle_far.position.x = -size_x_paddle;
+  if(paddle_far.position.x > size_x_paddle) 
+    paddle_far.position.x = size_x_paddle;
+  if(paddle_far.position.y < -size_y_paddle) 
+    paddle_far.position.y = -size_y_paddle;
+  if(paddle_far.position.y > size_y_paddle) 
+    paddle_far.position.y = size_y_paddle;
+  
+  // ball bounds
+  if(ball.position.x < -size_x_ball) {
+    ballVector[0] = -ballVector[0];
+    arena_left.material.color.setHex(color_arena_hightlight);
+  }
+  if(ball.position.x > size_x_ball){
+    ballVector[0] = -ballVector[0]; 
+    arena_right.material.color.setHex(color_arena_hightlight);
+  }
+  if(ball.position.y < -size_y_ball) {
+    ballVector[1] = -ballVector[1];
+    arena_bottom.material.color.setHex(color_arena_hightlight);
+  }
+  if(ball.position.y > size_y_ball) {
+    ballVector[1] = -ballVector[1];
+    arena_top.material.color.setHex(color_arena_hightlight);
+  }
+
+  // scoring zone
+  if(ball.position.z < -size_z) {
+    points_near++;
+    resetBall();
+  }
+  if(ball.position.z > size_z) {
+    points_far++;
+    resetBall();
+  }
+
+  // change the colors past paddle zone
+  if(ball.position.z < -400 || ball.position.z > 400) {
+    ball.material.color.setHex(0xff00ff);
+  }
+
+  // display info
+  // needs to skip the first frame so that the page divs are able to load
+  if(!firstFrame) {
+    document.getElementById("bluepoints").innerHTML = points_near.toString();
+    document.getElementById("orangepoints").innerHTML = points_far.toString();
+    var infoString;
+    if(leap == true && leap_with_AI == true) {
+      infoString = "Leap Motion device detected.  Orange paddle controlled by AI."
+      document.getElementById("bluecontroller").innerHTML = "LEAP";
+      document.getElementById("orangecontroller").innerHTML = "AI";
+    } else if (leap == true && leap_with_AI == false) {
+      infoString = "Mouse movement detected.  Orange controlled by mouse.  Blue controlled by Leap."
+      document.getElementById("bluecontroller").innerHTML = "LEAP";
+      document.getElementById("orangecontroller").innerHTML = "MOUSE";
+    } else {
+      infoString = "No Leap Motion device detected.  Blue paddle controlled by mouse."
+      document.getElementById("bluecontroller").innerHTML = "MOUSE";
+      document.getElementById("orangecontroller").innerHTML = "AI";
+    }
+    document.getElementById("ponginfo").innerHTML = infoString;
+  }
+  // render frame && get next frame
+  firstFrame = false;
+  renderer.render(scene, camera);
+  requestAnimationFrame(function(){
+      update();
+  });
+}
+
+function spawnBall() {
+  ball = new THREE.Mesh(new THREE.SphereGeometry(10,10,10), new THREE.MeshPhongMaterial({
+    specular: 0xFFFFFF,
+    color: 0xDDDDDD,
+    emissive: 0x000000,
+    shininess: 50
+  }));
+  scene.add(ball);
+  resetBall();
+}
+
+function resetBall() {
+  ball.position = new THREE.Vector3(0,0,0);
+  ball.material.color.setHex(0xDDDDDD);
+  ballVector = randomBallVelocity();
+  while(Math.abs(ballVector[2]) < 4) {
+    ballVector = randomBallVelocity();
+  }
+  particleSystem.position = new THREE.Vector3(0,0,0);
+}
+
+function randomBallVelocity() {
+  return [Math.random()*4 - 2, Math.random()*4 - 2, Math.random()*16 - 8];
+}
+
+function computeBounceVector(x1,y1,x2,y2) {
+  var x = x2 - x1;
+  var y = y2 - y1;
+  return [x/14,y/14];
+} 
+
+window.onmousemove = getMousePosition;
+function getMousePosition(event) {
+  event = event || window.event;
+  mouse = {
+    x: event.clientX,
+    y: event.clientY
+  };
+}
+
+function convertMouseCoordinates(x,y) {
+  var x_new = x*2*size_x / window.innerWidth;
+  var y_new = y*2*size_y / window.innerHeight;
+  x_new = x_new - size_x;
+  y_new = y_new - size_y;
+  return [x_new, y_new];
+}
+
+init();
+update();
+
+
+</script>
+
+<div id="ponghud">
+  <font color="#00AAFF">[<b><span id="bluecontroller"></span></b>] Blue Points: <span id="bluepoints">0</span></font><br>
+  <font color="#FFAA00">[<b><span id="orangecontroller"></span></b>] Orange Points: <span id="orangepoints">0</span></font>
+</div>
+
+<div id="ponginfo">
+  Info
+</div>
