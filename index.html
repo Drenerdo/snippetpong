@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Leap Pong</title>
+  <title>Snippet Ping Pong!</title>
   <link rel="stylesheet" type="text/css" href="assets/pong.css" />
 </head>
 <div id="container"></div>
@@ -115,6 +115,7 @@ Leap.loop({enableGestures: true}, function(frame) {
   }
 });
 
+
 // init the three js scene
 function init() {
   // renderer
@@ -210,7 +211,7 @@ function update() {
       paddle_far.position.x += (ball.position.x - paddle_far.position.x)/(5.5-ball.position.z/100);
       paddle_far.position.y += (ball.position.y - paddle_far.position.y)/(5.5-ball.position.z/100);
     } else { // when user moves mouse, leap_with_AI becomes false and user controls mouse
-      if(mouse) {
+      if(leap) {
         mouseArena = convertMouseCoordinates(mouse.x,mouse.y);
         paddle_far.position.x = 2*mouseArena[0];
         paddle_far.position.y = -2*mouseArena[1];
